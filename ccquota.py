@@ -123,20 +123,23 @@ def _api(path: str, cookies: dict) -> dict | list | None:
 # Data fetching
 # ---------------------------------------------------------------------------
 
-def _get_org_info(cookies: dict) -> tuple[str, str]:
-    """Return (org_id, org_name) from the bootstrap API."""
+def _get_account_info(cookies: dict) -> tuple[str, str, str]:
+    """Return (org_id, org_name, user_name) from the bootstrap API."""
     data = _api("/api/bootstrap", cookies)
     if not data:
         print("Failed to fetch bootstrap info.", file=sys.stderr)
         sys.exit(1)
 
-    memberships = data.get("account", {}).get("memberships", [])
+    account = data.get("account", {})
+    user_name = account.get("display_name") or account.get("full_name", "")
+
+    memberships = account.get("memberships", [])
     if not memberships:
         print("No organization found.", file=sys.stderr)
         sys.exit(1)
 
     org = memberships[0]["organization"]
-    return org["uuid"], org.get("name", "")
+    return org["uuid"], org.get("name", ""), user_name
 
 
 def _fetch_all(cookies: dict, org_id: str) -> dict:
@@ -217,7 +220,7 @@ def _usage_row(label: str, ratio: float, reset_at: str | None = None):
 # Display
 # ---------------------------------------------------------------------------
 
-def _display(data: dict, org_name: str, *, debug: bool = False, timestamp: str = ""):
+def _display(data: dict, org_name: str, user_name: str = "", *, debug: bool = False, timestamp: str = ""):
     if debug:
         print(json.dumps(data, indent=2, ensure_ascii=False))
         return
@@ -227,7 +230,8 @@ def _display(data: dict, org_name: str, *, debug: bool = False, timestamp: str =
     members = data.get("members", {})
     credits_data = data.get("credits", {})
 
-    _section("Your Usage")
+    title = f"Your Usage ({user_name})" if user_name else "Your Usage"
+    _section(title)
 
     five = usage.get("five_hour", {})
     if five:
@@ -327,22 +331,22 @@ def cmd_login():
     print("Run `ccquota` to view your usage.")
 
 
-def _fetch_and_display(cookies: dict, org_id: str, org_name: str, *, debug: bool = False, timestamp: str = ""):
+def _fetch_and_display(cookies: dict, org_id: str, org_name: str, user_name: str = "", *, debug: bool = False, timestamp: str = ""):
     """Fetch data and display. Returns True on success."""
     data = _fetch_all(cookies, org_id)
     if not data:
         return False
-    _display(data, org_name, debug=debug, timestamp=timestamp)
+    _display(data, org_name, user_name, debug=debug, timestamp=timestamp)
     return True
 
 
 def cmd_show(*, debug: bool = False, watch: bool = False, interval: int = 60):
     """Fetch and display usage data."""
     cookies = _extract_cookies()
-    org_id, org_name = _get_org_info(cookies)
+    org_id, org_name, user_name = _get_account_info(cookies)
 
     if not watch:
-        if not _fetch_and_display(cookies, org_id, org_name, debug=debug):
+        if not _fetch_and_display(cookies, org_id, org_name, user_name, debug=debug):
             print("Failed to fetch usage data.", file=sys.stderr)
             sys.exit(1)
         return
@@ -351,7 +355,7 @@ def cmd_show(*, debug: bool = False, watch: bool = False, interval: int = 60):
         while True:
             os.system("clear" if os.name != "nt" else "cls")
             now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            _fetch_and_display(cookies, org_id, org_name, debug=debug, timestamp=now)
+            _fetch_and_display(cookies, org_id, org_name, user_name, debug=debug, timestamp=now)
             print(f"  {_dim(f'Refreshing every {interval}s — Ctrl+C to quit')}")
             time.sleep(interval)
     except KeyboardInterrupt:
