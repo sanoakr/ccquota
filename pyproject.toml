@@ -5,7 +5,7 @@ description = "CLI tool to display Claude usage quota from claude.ai"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13"
-authors = [{ name = "SANO Akira", email = "sano@math.ryukoku.ac.jp" }]
+authors = [{ name = "SANO Akira", email = "sano@maica.org" }]
 keywords = ["claude", "anthropic", "usage", "quota", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",
