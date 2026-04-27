@@ -1,6 +1,6 @@
 # ccquota
 
-[Claude](https://claude.ai) の使用量をターミナルに表示する CLI ツール。セッション制限、週間制限、組織の支出、ユーザー別の内訳を確認できます。
+[Claude](https://claude.ai) の使用量をターミナルに表示する CLI ツール。セッション制限、週間制限を表示し、オプションで組織の支出やユーザー別の内訳も確認できます。
 
 [English README](README.md)
 
@@ -14,17 +14,21 @@
 ## 出力例
 
 ```
-  Your Usage
+  Your Usage (Alice)
   ──────────────────────────────────────────────
-  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
-  Weekly Limit      █████████████████████░░░░░░░░░ 72%
+  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
+  Weekly Limit      ██████████████████░░░░░░░ 72%
                     ↻ resets 4/29 (Wed) 17:00
-  Claude Design     ████████████████░░░░░░░░░░░░░░ 54%
+  Claude Design     █████████████░░░░░░░░░░░░ 54%
                     ↻ resets 4/29 (Wed) 17:00
+```
 
+`--org` 指定時:
+
+```
   Organization (MyTeam)
   ──────────────────────────────────────────────
-  Monthly Spend     ██████████████████░░░░░░░░░░░░ 60%  ($120.09 / $200.00)
+  Monthly Spend     ███████████████░░░░░░░░░░ 60%  ($120.09 / $200.00)
   Balance           $79.90
 
   Spend by User
@@ -60,27 +64,34 @@ Chrome ウィンドウが開きます。claude.ai にサインインすると、
 ### 使用量を表示
 
 ```bash
-uv run ccquota           # デフォルト: 使用量を表示
-uv run ccquota show      # サブコマンドを明示
-uv run ccquota --debug   # API の生 JSON を表示
+ccquota                  # 個人使用量のみ（デフォルト）
+ccquota --org            # 組織の支出・ユーザー別内訳も表示
+ccquota --watch          # 60秒ごとに自動更新
+ccquota -w -n 30         # 30秒間隔で更新
+ccquota -o -w            # 組織込み + watch モード
+ccquota --debug          # API の生 JSON を表示
 ```
 
-### コマンドとしてインストール
+> `uv pip install -e .` でインストールすると `ccquota` を直接実行できます。未インストール時は `uv run` を付けてください。
 
-```bash
-uv pip install -e .
-ccquota
-```
+### オプション
+
+| フラグ | 短縮 | 説明 |
+|---|---|---|
+| `--org` | `-o` | 組織の支出・ユーザー別内訳を表示 |
+| `--watch` | `-w` | 定期的に自動更新（デフォルト: 60秒） |
+| `--interval SEC` | `-n SEC` | 更新間隔の秒数（デフォルト: 60） |
+| `--debug` | | API の生 JSON データを表示 |
 
 ## 使用する API エンドポイント
 
-| エンドポイント | データ |
-|---|---|
-| `/api/bootstrap` | 組織 ID、ユーザー情報 |
-| `/api/organizations/{id}/usage` | セッション（5h）、週間、Design、Opus の使用率 |
-| `/api/organizations/{id}/overage_spend_limit` | 月間支出と上限 |
-| `/api/organizations/{id}/overage_spend_limits` | ユーザー別支出 |
-| `/api/organizations/{id}/prepaid/credits` | プリペイド残高 |
+| エンドポイント | データ | 条件 |
+|---|---|---|
+| `/api/bootstrap` | 組織 ID、ユーザー情報 | 常時 |
+| `/api/organizations/{id}/usage` | セッション（5h）、週間、Design、Opus の使用率 | 常時 |
+| `/api/organizations/{id}/overage_spend_limit` | 月間支出と上限 | `--org` |
+| `/api/organizations/{id}/overage_spend_limits` | ユーザー別支出 | `--org` |
+| `/api/organizations/{id}/prepaid/credits` | プリペイド残高 | `--org` |
 
 ## データの保存場所
 

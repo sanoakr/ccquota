@@ -1,6 +1,6 @@
 # ccquota
 
-A CLI tool that displays your [Claude](https://claude.ai) usage quota — session limits, weekly limits, organization spending, and per-user breakdown.
+A CLI tool that displays your [Claude](https://claude.ai) usage quota — session limits, weekly limits, and optionally organization spending with per-user breakdown.
 
 [日本語版 README はこちら](README.ja.md)
 
@@ -14,17 +14,21 @@ A CLI tool that displays your [Claude](https://claude.ai) usage quota — sessio
 ## Example Output
 
 ```
-  Your Usage
+  Your Usage (Alice)
   ──────────────────────────────────────────────
-  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
-  Weekly Limit      █████████████████████░░░░░░░░░ 72%
+  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
+  Weekly Limit      ██████████████████░░░░░░░ 72%
                     ↻ resets 4/29 (Wed) 17:00
-  Claude Design     ████████████████░░░░░░░░░░░░░░ 54%
+  Claude Design     █████████████░░░░░░░░░░░░ 54%
                     ↻ resets 4/29 (Wed) 17:00
+```
 
+With `--org`:
+
+```
   Organization (MyTeam)
   ──────────────────────────────────────────────
-  Monthly Spend     ██████████████████░░░░░░░░░░░░ 60%  ($120.09 / $200.00)
+  Monthly Spend     ███████████████░░░░░░░░░░ 60%  ($120.09 / $200.00)
   Balance           $79.90
 
   Spend by User
@@ -60,27 +64,34 @@ A Chrome window opens. Sign in to claude.ai, and the tool auto-detects completio
 ### View usage
 
 ```bash
-uv run ccquota           # default: show usage
-uv run ccquota show      # explicit subcommand
-uv run ccquota --debug   # print raw JSON from APIs
+ccquota                  # personal usage only (default)
+ccquota --org            # include organization spending & per-user breakdown
+ccquota --watch          # refresh every 60s
+ccquota -w -n 30         # refresh every 30s
+ccquota -o -w            # organization + watch mode
+ccquota --debug          # print raw JSON from APIs
 ```
 
-### Install as a command
+> When installed via `uv pip install -e .`, you can run `ccquota` directly. Otherwise prefix with `uv run`.
 
-```bash
-uv pip install -e .
-ccquota
-```
+### Options
+
+| Flag | Short | Description |
+|---|---|---|
+| `--org` | `-o` | Include organization spending and per-user breakdown |
+| `--watch` | `-w` | Refresh periodically (default: every 60s) |
+| `--interval SEC` | `-n SEC` | Watch interval in seconds (default: 60) |
+| `--debug` | | Print raw JSON data from APIs |
 
 ## API Endpoints Used
 
-| Endpoint | Data |
-|---|---|
-| `/api/bootstrap` | Organization ID, user info |
-| `/api/organizations/{id}/usage` | Session (5h), weekly, Design, Opus utilization |
-| `/api/organizations/{id}/overage_spend_limit` | Monthly spend vs. limit |
-| `/api/organizations/{id}/overage_spend_limits` | Per-user spend breakdown |
-| `/api/organizations/{id}/prepaid/credits` | Prepaid credit balance |
+| Endpoint | Data | When |
+|---|---|---|
+| `/api/bootstrap` | Organization ID, user info | Always |
+| `/api/organizations/{id}/usage` | Session (5h), weekly, Design, Opus utilization | Always |
+| `/api/organizations/{id}/overage_spend_limit` | Monthly spend vs. limit | `--org` |
+| `/api/organizations/{id}/overage_spend_limits` | Per-user spend breakdown | `--org` |
+| `/api/organizations/{id}/prepaid/credits` | Prepaid credit balance | `--org` |
 
 ## Data Storage
 
