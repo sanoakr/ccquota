@@ -45,7 +45,6 @@
 git clone https://github.com/sanoakr/ccquota.git
 cd ccquota
 uv sync
-uv run playwright install chromium
 ```
 
 ## 使い方

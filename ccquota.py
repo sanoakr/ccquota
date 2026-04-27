@@ -9,7 +9,7 @@ Subsequent data fetches are fully headless (cookie extraction + curl_cffi).
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from curl_cffi import requests as curl_requests

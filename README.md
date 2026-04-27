@@ -45,7 +45,6 @@ A CLI tool that displays your [Claude](https://claude.ai) usage quota — sessio
 git clone https://github.com/sanoakr/ccquota.git
 cd ccquota
 uv sync
-uv run playwright install chromium
 ```
 
 ## Usage
