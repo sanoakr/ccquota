@@ -1,6 +1,6 @@
 # ccquota
 
-A CLI tool that displays your [Claude](https://claude.ai) usage quota — session limits, weekly limits, and optionally organization spending with per-user breakdown.
+A CLI tool that displays your [Claude](https://claude.ai) usage quota — session limits, weekly limits, and optionally organization spending with per-user breakdown. Supports multiple accounts.
 
 [日本語版 README はこちら](README.ja.md)
 
@@ -8,8 +8,8 @@ A CLI tool that displays your [Claude](https://claude.ai) usage quota — sessio
 
 `ccquota` calls Claude's internal APIs directly. No browser is launched during normal use.
 
-1. **Login (one-time):** Opens Chrome for you to sign in to claude.ai. The session is saved locally in `~/.config/ccquota/browser/`.
-2. **Show (default):** Extracts cookies from the saved session (headless, no window), then fetches usage data via [curl_cffi](https://github.com/lexiforest/curl_cffi) which impersonates a real browser's TLS fingerprint to pass Cloudflare.
+1. **Login (one-time per account):** Opens Chrome for you to sign in to claude.ai. The session is saved locally under `~/.config/ccquota/sessions/<name>/`.
+2. **Show (default):** Extracts cookies from saved sessions (headless, no window), then fetches usage data via [curl_cffi](https://github.com/lexiforest/curl_cffi) which impersonates a real browser's TLS fingerprint to pass Cloudflare.
 
 ## Example Output
 
@@ -21,6 +21,12 @@ A CLI tool that displays your [Claude](https://claude.ai) usage quota — sessio
                     ↻ resets 4/29 (Wed) 17:00
   Claude Design     █████████████░░░░░░░░░░░░ 54%
                     ↻ resets 4/29 (Wed) 17:00
+
+  Your Usage (Bob)
+  ──────────────────────────────────────────────
+  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
+  Weekly Limit      ████████░░░░░░░░░░░░░░░░░ 32%
+                    ↻ resets 4/30 (Thu) 14:00
 ```
 
 With `--org`:
@@ -59,12 +65,22 @@ uv sync
 uv run ccquota login
 ```
 
-A Chrome window opens. Sign in to claude.ai, and the tool auto-detects completion (up to 5 min timeout). The session is saved to `~/.config/ccquota/browser/`.
+A Chrome window opens. Sign in to claude.ai, and the tool auto-detects completion (up to 5 min timeout). The session is saved under `~/.config/ccquota/sessions/<name>/`.
+
+### Adding another account
+
+Simply run `ccquota login` again and sign in with a different account:
+
+```bash
+ccquota login      # first account
+ccquota login      # second account — opens a fresh browser
+```
 
 ### View usage
 
 ```bash
-ccquota                  # personal usage only (default)
+ccquota                  # all accounts (default)
+ccquota --user Alice     # specific account only
 ccquota --org            # include organization spending & per-user breakdown
 ccquota --watch          # refresh every 60s
 ccquota -w -n 30         # refresh every 30s
@@ -74,10 +90,19 @@ ccquota --debug          # print raw JSON from APIs
 
 > When installed via `uv pip install -e .`, you can run `ccquota` directly. Otherwise prefix with `uv run`.
 
+### Logout
+
+```bash
+ccquota logout           # remove session (auto-selects if only one)
+ccquota logout Alice     # remove a specific session
+ccquota logout --all     # remove all sessions
+```
+
 ### Options
 
 | Flag | Short | Description |
 |---|---|---|
+| `--user NAME` | `-u NAME` | Show only the specified session |
 | `--org` | `-o` | Include organization spending and per-user breakdown |
 | `--watch` | `-w` | Refresh periodically (default: every 60s) |
 | `--interval SEC` | `-n SEC` | Watch interval in seconds (default: 60) |
@@ -95,13 +120,9 @@ ccquota --debug          # print raw JSON from APIs
 
 ## Data Storage
 
-All data is stored locally under `~/.config/ccquota/browser/`. This is a Chromium user-data directory containing your claude.ai session cookies. No credentials are stored elsewhere.
+Session data is stored under `~/.config/ccquota/sessions/`, with one subdirectory per account. Each is a Chromium user-data directory containing claude.ai session cookies. No credentials are stored elsewhere.
 
-To log out, delete the directory:
-
-```bash
-rm -rf ~/.config/ccquota/browser
-```
+Legacy single-session data (`~/.config/ccquota/browser/`) is automatically migrated on first run.
 
 ## License
 

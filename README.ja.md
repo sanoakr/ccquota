@@ -1,6 +1,6 @@
 # ccquota
 
-[Claude](https://claude.ai) の使用量をターミナルに表示する CLI ツール。セッション制限、週間制限を表示し、オプションで組織の支出やユーザー別の内訳も確認できます。
+[Claude](https://claude.ai) の使用量をターミナルに表示する CLI ツール。セッション制限、週間制限を表示し、オプションで組織の支出やユーザー別の内訳も確認できます。複数アカウントに対応。
 
 [English README](README.md)
 
@@ -8,7 +8,7 @@
 
 `ccquota` は Claude の内部 API を直接呼び出します。通常の使用時にブラウザウィンドウは表示されません。
 
-1. **ログイン（初回のみ）:** Chrome を開いて claude.ai にサインイン。セッションは `~/.config/ccquota/browser/` にローカル保存されます。
+1. **ログイン（アカウントごとに初回のみ）:** Chrome を開いて claude.ai にサインイン。セッションは `~/.config/ccquota/sessions/<name>/` にローカル保存されます。
 2. **表示（デフォルト）:** 保存済みセッションから Cookie を抽出（ヘッドレス、ウィンドウなし）し、[curl_cffi](https://github.com/lexiforest/curl_cffi) でブラウザの TLS フィンガープリントを模倣して Cloudflare を通過します。
 
 ## 出力例
@@ -21,6 +21,12 @@
                     ↻ resets 4/29 (Wed) 17:00
   Claude Design     █████████████░░░░░░░░░░░░ 54%
                     ↻ resets 4/29 (Wed) 17:00
+
+  Your Usage (Bob)
+  ──────────────────────────────────────────────
+  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
+  Weekly Limit      ████████░░░░░░░░░░░░░░░░░ 32%
+                    ↻ resets 4/30 (Thu) 14:00
 ```
 
 `--org` 指定時:
@@ -59,12 +65,22 @@ uv sync
 uv run ccquota login
 ```
 
-Chrome ウィンドウが開きます。claude.ai にサインインすると、ログイン完了を自動検出します（最大 5 分待機）。セッションは `~/.config/ccquota/browser/` に保存されます。
+Chrome ウィンドウが開きます。claude.ai にサインインすると、ログイン完了を自動検出します（最大 5 分待機）。セッションは `~/.config/ccquota/sessions/<name>/` に保存されます。
+
+### 別のアカウントを追加
+
+`ccquota login` をもう一度実行して、別のアカウントでサインインするだけです:
+
+```bash
+ccquota login      # 1つ目のアカウント
+ccquota login      # 2つ目のアカウント — 新しいブラウザが開く
+```
 
 ### 使用量を表示
 
 ```bash
-ccquota                  # 個人使用量のみ（デフォルト）
+ccquota                  # 全アカウント（デフォルト）
+ccquota --user Alice     # 特定のアカウントのみ
 ccquota --org            # 組織の支出・ユーザー別内訳も表示
 ccquota --watch          # 60秒ごとに自動更新
 ccquota -w -n 30         # 30秒間隔で更新
@@ -74,10 +90,19 @@ ccquota --debug          # API の生 JSON を表示
 
 > `uv pip install -e .` でインストールすると `ccquota` を直接実行できます。未インストール時は `uv run` を付けてください。
 
+### ログアウト
+
+```bash
+ccquota logout           # セッションを削除（1つだけなら自動選択）
+ccquota logout Alice     # 特定のセッションを削除
+ccquota logout --all     # すべてのセッションを削除
+```
+
 ### オプション
 
 | フラグ | 短縮 | 説明 |
 |---|---|---|
+| `--user NAME` | `-u NAME` | 指定したセッションのみ表示 |
 | `--org` | `-o` | 組織の支出・ユーザー別内訳を表示 |
 | `--watch` | `-w` | 定期的に自動更新（デフォルト: 60秒） |
 | `--interval SEC` | `-n SEC` | 更新間隔の秒数（デフォルト: 60） |
@@ -95,13 +120,9 @@ ccquota --debug          # API の生 JSON を表示
 
 ## データの保存場所
 
-すべてのデータは `~/.config/ccquota/browser/` にローカル保存されます。これは Chromium のユーザーデータディレクトリで、claude.ai のセッション Cookie が含まれています。他の場所に認証情報は保存されません。
+セッションデータは `~/.config/ccquota/sessions/` に保存され、アカウントごとにサブディレクトリが作られます。各ディレクトリは Chromium のユーザーデータディレクトリで、claude.ai のセッション Cookie が含まれています。他の場所に認証情報は保存されません。
 
-ログアウトするにはディレクトリを削除します:
-
-```bash
-rm -rf ~/.config/ccquota/browser
-```
+旧形式の単一セッションデータ（`~/.config/ccquota/browser/`）は初回実行時に自動で移行されます。
 
 ## ライセンス
 

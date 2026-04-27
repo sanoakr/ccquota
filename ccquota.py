@@ -9,6 +9,8 @@ Subsequent data fetches are fully headless (cookie extraction + curl_cffi).
 import argparse
 import json
 import os
+import re
+import shutil
 import sys
 import time
 from datetime import datetime
@@ -18,7 +20,8 @@ from curl_cffi import requests as curl_requests
 from playwright.sync_api import sync_playwright
 
 CONFIG_DIR = Path.home() / ".config" / "ccquota"
-BROWSER_DIR = CONFIG_DIR / "browser"
+SESSIONS_DIR = CONFIG_DIR / "sessions"
+_LEGACY_BROWSER_DIR = CONFIG_DIR / "browser"
 BASE_URL = "https://claude.ai"
 
 WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -78,23 +81,89 @@ def _bar_color(ratio: float) -> callable:
 
 
 # ---------------------------------------------------------------------------
+# Session management
+# ---------------------------------------------------------------------------
+
+def _sanitize_name(name: str) -> str:
+    """ディスプレイ名をディレクトリ名に安全な文字列に変換する。"""
+    s = re.sub(r"[^\w\-.]", "_", name).strip("_")
+    return s or "default"
+
+
+def _session_dir(name: str) -> Path:
+    return SESSIONS_DIR / name
+
+
+def _list_sessions() -> list[str]:
+    """既存セッション名のソート済みリストを返す。"""
+    if not SESSIONS_DIR.exists():
+        return []
+    return sorted(
+        d.name for d in SESSIONS_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith("_")
+    )
+
+
+def _migrate_legacy():
+    """旧形式（単一 browser/）から名前付きセッションへの一回限りの移行。"""
+    if not _LEGACY_BROWSER_DIR.exists():
+        return
+    name = "default"
+    try:
+        cookies = _extract_cookies(_LEGACY_BROWSER_DIR)
+        data = _api("/api/bootstrap", cookies)
+        if data:
+            account = data.get("account", {})
+            raw = account.get("display_name") or account.get("full_name", "")
+            if raw:
+                name = _sanitize_name(raw)
+    except (Exception, SystemExit):
+        pass
+    target = _session_dir(name)
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.move(str(_LEGACY_BROWSER_DIR), str(target))
+    print(f"Migrated legacy session → '{name}'")
+
+
+def _resolve_session(user: str) -> Path:
+    """指定されたユーザーのセッションディレクトリを返す。"""
+    d = _session_dir(user)
+    if not d.exists():
+        sessions = _list_sessions()
+        msg = f"Session '{user}' not found."
+        if sessions:
+            msg += f" Available: {', '.join(sessions)}"
+        else:
+            msg += " Run `ccquota login` first."
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+    return d
+
+
+# ---------------------------------------------------------------------------
 # Cookie / API helpers
 # ---------------------------------------------------------------------------
 
-def _extract_cookies() -> dict[str, str]:
+def _extract_cookies(browser_dir: Path) -> dict[str, str]:
     """Extract cookies from the Playwright persistent context (no page navigation)."""
-    if not BROWSER_DIR.exists():
+    if not browser_dir.exists():
         print("No session found. Run `ccquota login` first.", file=sys.stderr)
         sys.exit(1)
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
-            str(BROWSER_DIR), channel="chrome", headless=True,
+            str(browser_dir), channel="chrome", headless=True,
         )
         raw = ctx.cookies(["https://claude.ai"])
         ctx.close()
 
     return {c["name"]: c["value"] for c in raw}
+
+
+class AuthError(Exception):
+    pass
 
 
 def _api(path: str, cookies: dict) -> dict | list | None:
@@ -111,8 +180,7 @@ def _api(path: str, cookies: dict) -> dict | list | None:
         return None
 
     if resp.status_code in (401, 403):
-        print("Auth error. Run `ccquota login` to re-authenticate.", file=sys.stderr)
-        sys.exit(1)
+        raise AuthError("Run `ccquota login` to re-authenticate.")
     if resp.status_code != 200:
         return None
 
@@ -296,11 +364,22 @@ def _display(data: dict, org_name: str, user_name: str = "", *, debug: bool = Fa
 
 def cmd_login():
     """Open a browser for the user to log in and save the session."""
-    BROWSER_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy()
+
+    existing = _list_sessions()
+    if existing:
+        print(f"Existing sessions: {', '.join(existing)}")
+        print("A new browser window will open. Log in with a different account to add it.")
+        print()
+
+    temp_dir = SESSIONS_DIR / "_login_temp"
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
-            str(BROWSER_DIR), channel="chrome", headless=False,
+            str(temp_dir), channel="chrome", headless=False,
             viewport={"width": 1280, "height": 900},
             args=["--disable-blink-features=AutomationControlled"],
         )
@@ -317,19 +396,82 @@ def cmd_login():
         else:
             print("Timed out.", file=sys.stderr)
             ctx.close()
+            shutil.rmtree(temp_dir)
             sys.exit(1)
 
         ctx.close()
 
-    cookies = _extract_cookies()
-    data = _api("/api/bootstrap", cookies)
+    cookies = _extract_cookies(temp_dir)
+    try:
+        data = _api("/api/bootstrap", cookies)
+    except AuthError:
+        data = None
     if not data:
         print("Login failed. Please try again.", file=sys.stderr)
+        shutil.rmtree(temp_dir)
         sys.exit(1)
 
-    name = data.get("account", {}).get("full_name", "")
-    print(f"Login successful: {name}")
-    print("Run `ccquota` to view your usage.")
+    account = data.get("account", {})
+    raw_name = account.get("display_name") or account.get("full_name", "")
+    name = _sanitize_name(raw_name) if raw_name else "default"
+
+    target = _session_dir(name)
+    is_update = target.exists()
+    if is_update:
+        shutil.rmtree(target)
+    shutil.move(str(temp_dir), str(target))
+
+    if is_update:
+        print(f"Session updated: {raw_name or name}")
+    else:
+        print(f"Session added: {raw_name or name}")
+
+    all_sessions = _list_sessions()
+    if len(all_sessions) > 1:
+        print(f"All sessions: {', '.join(all_sessions)}")
+        print("Run `ccquota` to view all sessions.")
+
+
+def cmd_logout(user: str | None = None, *, remove_all: bool = False):
+    """Remove saved session data."""
+    _migrate_legacy()
+
+    if remove_all:
+        sessions = _list_sessions()
+        if not sessions:
+            print("No sessions found.")
+            return
+        for s in sessions:
+            shutil.rmtree(_session_dir(s))
+            print(f"Removed session: {s}")
+        return
+
+    if user:
+        d = _session_dir(user)
+        if not d.exists():
+            sessions = _list_sessions()
+            msg = f"Session '{user}' not found."
+            if sessions:
+                msg += f" Available: {', '.join(sessions)}"
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+        shutil.rmtree(d)
+        print(f"Logged out: {user}")
+        return
+
+    sessions = _list_sessions()
+    if not sessions:
+        print("No sessions found.")
+        return
+    if len(sessions) == 1:
+        shutil.rmtree(_session_dir(sessions[0]))
+        print(f"Logged out: {sessions[0]}")
+        return
+
+    print("Multiple sessions. Specify with `ccquota logout <name>` or --all:", file=sys.stderr)
+    for s in sessions:
+        print(f"  - {s}", file=sys.stderr)
+    sys.exit(1)
 
 
 def _fetch_and_display(cookies: dict, org_id: str, org_name: str, user_name: str = "", *, org: bool = False, debug: bool = False, timestamp: str = ""):
@@ -341,10 +483,14 @@ def _fetch_and_display(cookies: dict, org_id: str, org_name: str, user_name: str
     return True
 
 
-def cmd_show(*, org: bool = False, debug: bool = False, watch: bool = False, interval: int = 60):
-    """Fetch and display usage data."""
-    cookies = _extract_cookies()
-    org_id, org_name, user_name = _get_account_info(cookies)
+def _show_single(browser_dir: Path, *, org: bool, debug: bool, watch: bool, interval: int):
+    """単一セッションのデータを表示する。"""
+    try:
+        cookies = _extract_cookies(browser_dir)
+        org_id, org_name, user_name = _get_account_info(cookies)
+    except AuthError as e:
+        print(f"Auth error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     if not watch:
         if not _fetch_and_display(cookies, org_id, org_name, user_name, org=org, debug=debug):
@@ -363,18 +509,69 @@ def cmd_show(*, org: bool = False, debug: bool = False, watch: bool = False, int
         print()
 
 
+def _show_all(sessions: list[str], *, org: bool, debug: bool, watch: bool, interval: int):
+    """全セッションのデータを表示する。"""
+    def _show_one(name: str, *, timestamp: str = ""):
+        try:
+            cookies = _extract_cookies(_session_dir(name))
+            oid, oname, uname = _get_account_info(cookies)
+            if not _fetch_and_display(cookies, oid, oname, uname, org=org, debug=debug, timestamp=timestamp):
+                print(f"  Failed to fetch data for '{name}'.", file=sys.stderr)
+        except AuthError as e:
+            print(f"  {name}: {e}", file=sys.stderr)
+
+    if not watch:
+        for s in sessions:
+            _show_one(s)
+        return
+
+    try:
+        while True:
+            os.system("clear" if os.name != "nt" else "cls")
+            now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            for s in sessions:
+                _show_one(s, timestamp=now)
+            print(f"  {_dim(f'Refreshing every {interval}s — Ctrl+C to quit')}")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
+
+
+def cmd_show(*, user: str | None = None, org: bool = False, debug: bool = False, watch: bool = False, interval: int = 60):
+    """Fetch and display usage data."""
+    _migrate_legacy()
+
+    if user:
+        browser_dir = _resolve_session(user)
+        _show_single(browser_dir, org=org, debug=debug, watch=watch, interval=interval)
+    else:
+        sessions = _list_sessions()
+        if not sessions:
+            print("No sessions found. Run `ccquota login` first.", file=sys.stderr)
+            sys.exit(1)
+        _show_all(sessions, org=org, debug=debug, watch=watch, interval=interval)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Claude usage quota viewer",
         epilog="Run `ccquota login` first to authenticate.",
     )
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("login", help="Log in via browser")
+    sub.add_parser("login", help="Log in via browser (run again to add another account)")
+
+    logout_p = sub.add_parser("logout", help="Remove saved session")
+    logout_p.add_argument("user", nargs="?", help="Session name to remove")
+    logout_p.add_argument("--all", action="store_true", help="Remove all sessions")
+
     show_p = sub.add_parser("show", help="Show usage (default)")
+    show_p.add_argument("--user", "-u", help="Show only this session")
     show_p.add_argument("--org", "-o", action="store_true", help="Include organization spending and per-user breakdown")
     show_p.add_argument("--debug", action="store_true", help="Print raw JSON data")
     show_p.add_argument("--watch", "-w", action="store_true", help="Refresh every 60s")
     show_p.add_argument("--interval", "-n", type=int, default=60, metavar="SEC", help="Watch interval in seconds (default: 60)")
+
+    parser.add_argument("--user", "-u", help="Show only this session")
     parser.add_argument("--org", "-o", action="store_true", help="Include organization spending and per-user breakdown")
     parser.add_argument("--debug", action="store_true", help="Print raw JSON data")
     parser.add_argument("--watch", "-w", action="store_true", help="Refresh every 60s")
@@ -383,8 +580,10 @@ def main():
     args = parser.parse_args()
     if args.command == "login":
         cmd_login()
+    elif args.command == "logout":
+        cmd_logout(args.user, remove_all=args.all)
     else:
-        cmd_show(org=args.org, debug=args.debug, watch=args.watch, interval=args.interval)
+        cmd_show(user=args.user, org=args.org, debug=args.debug, watch=args.watch, interval=args.interval)
 
 
 if __name__ == "__main__":
