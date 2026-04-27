@@ -219,17 +219,20 @@ def _fetch_all(cookies: dict, org_id: str, *, org: bool = False) -> dict:
         result["usage"] = usage
 
     if org:
-        spend = _api(f"/api/organizations/{org_id}/overage_spend_limit", cookies)
-        if spend:
-            result["spend"] = spend
+        try:
+            spend = _api(f"/api/organizations/{org_id}/overage_spend_limit", cookies)
+            if spend:
+                result["spend"] = spend
 
-        members = _api(f"/api/organizations/{org_id}/overage_spend_limits?page=1&per_page=100", cookies)
-        if members:
-            result["members"] = members
+            members = _api(f"/api/organizations/{org_id}/overage_spend_limits?page=1&per_page=100", cookies)
+            if members:
+                result["members"] = members
 
-        credits = _api(f"/api/organizations/{org_id}/prepaid/credits", cookies)
-        if credits:
-            result["credits"] = credits
+            credits = _api(f"/api/organizations/{org_id}/prepaid/credits", cookies)
+            if credits:
+                result["credits"] = credits
+        except AuthError:
+            pass
 
     return result
 
