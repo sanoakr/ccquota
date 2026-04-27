@@ -142,25 +142,26 @@ def _get_account_info(cookies: dict) -> tuple[str, str, str]:
     return org["uuid"], org.get("name", ""), user_name
 
 
-def _fetch_all(cookies: dict, org_id: str) -> dict:
-    """Fetch all usage data from multiple API endpoints."""
+def _fetch_all(cookies: dict, org_id: str, *, org: bool = False) -> dict:
+    """Fetch usage data. Organization spending is included only when org=True."""
     result = {}
 
     usage = _api(f"/api/organizations/{org_id}/usage", cookies)
     if usage:
         result["usage"] = usage
 
-    spend = _api(f"/api/organizations/{org_id}/overage_spend_limit", cookies)
-    if spend:
-        result["spend"] = spend
+    if org:
+        spend = _api(f"/api/organizations/{org_id}/overage_spend_limit", cookies)
+        if spend:
+            result["spend"] = spend
 
-    members = _api(f"/api/organizations/{org_id}/overage_spend_limits?page=1&per_page=100", cookies)
-    if members:
-        result["members"] = members
+        members = _api(f"/api/organizations/{org_id}/overage_spend_limits?page=1&per_page=100", cookies)
+        if members:
+            result["members"] = members
 
-    credits = _api(f"/api/organizations/{org_id}/prepaid/credits", cookies)
-    if credits:
-        result["credits"] = credits
+        credits = _api(f"/api/organizations/{org_id}/prepaid/credits", cookies)
+        if credits:
+            result["credits"] = credits
 
     return result
 
@@ -331,22 +332,22 @@ def cmd_login():
     print("Run `ccquota` to view your usage.")
 
 
-def _fetch_and_display(cookies: dict, org_id: str, org_name: str, user_name: str = "", *, debug: bool = False, timestamp: str = ""):
+def _fetch_and_display(cookies: dict, org_id: str, org_name: str, user_name: str = "", *, org: bool = False, debug: bool = False, timestamp: str = ""):
     """Fetch data and display. Returns True on success."""
-    data = _fetch_all(cookies, org_id)
+    data = _fetch_all(cookies, org_id, org=org)
     if not data:
         return False
     _display(data, org_name, user_name, debug=debug, timestamp=timestamp)
     return True
 
 
-def cmd_show(*, debug: bool = False, watch: bool = False, interval: int = 60):
+def cmd_show(*, org: bool = False, debug: bool = False, watch: bool = False, interval: int = 60):
     """Fetch and display usage data."""
     cookies = _extract_cookies()
     org_id, org_name, user_name = _get_account_info(cookies)
 
     if not watch:
-        if not _fetch_and_display(cookies, org_id, org_name, user_name, debug=debug):
+        if not _fetch_and_display(cookies, org_id, org_name, user_name, org=org, debug=debug):
             print("Failed to fetch usage data.", file=sys.stderr)
             sys.exit(1)
         return
@@ -355,7 +356,7 @@ def cmd_show(*, debug: bool = False, watch: bool = False, interval: int = 60):
         while True:
             os.system("clear" if os.name != "nt" else "cls")
             now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            _fetch_and_display(cookies, org_id, org_name, user_name, debug=debug, timestamp=now)
+            _fetch_and_display(cookies, org_id, org_name, user_name, org=org, debug=debug, timestamp=now)
             print(f"  {_dim(f'Refreshing every {interval}s — Ctrl+C to quit')}")
             time.sleep(interval)
     except KeyboardInterrupt:
@@ -370,9 +371,11 @@ def main():
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("login", help="Log in via browser")
     show_p = sub.add_parser("show", help="Show usage (default)")
+    show_p.add_argument("--org", "-o", action="store_true", help="Include organization spending and per-user breakdown")
     show_p.add_argument("--debug", action="store_true", help="Print raw JSON data")
     show_p.add_argument("--watch", "-w", action="store_true", help="Refresh every 60s")
     show_p.add_argument("--interval", "-n", type=int, default=60, metavar="SEC", help="Watch interval in seconds (default: 60)")
+    parser.add_argument("--org", "-o", action="store_true", help="Include organization spending and per-user breakdown")
     parser.add_argument("--debug", action="store_true", help="Print raw JSON data")
     parser.add_argument("--watch", "-w", action="store_true", help="Refresh every 60s")
     parser.add_argument("--interval", "-n", type=int, default=60, metavar="SEC", help="Watch interval in seconds (default: 60)")
@@ -381,7 +384,7 @@ def main():
     if args.command == "login":
         cmd_login()
     else:
-        cmd_show(debug=args.debug, watch=args.watch, interval=args.interval)
+        cmd_show(org=args.org, debug=args.debug, watch=args.watch, interval=args.interval)
 
 
 if __name__ == "__main__":
