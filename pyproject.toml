@@ -1,6 +1,6 @@
 [project]
 name = "ccquota"
-version = "0.5.0"
+version = "0.5.1"
 description = "CLI tool to display Claude usage quota from claude.ai"
 readme = "README.md"
 license = "MIT"

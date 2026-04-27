@@ -13,6 +13,8 @@ A CLI tool that displays your [Claude](https://claude.ai) usage quota — sessio
 
 ## Example Output
 
+Default — shows personal usage for all saved sessions:
+
 ```
   Your Usage (Alice)
   ──────────────────────────────────────────────
@@ -29,9 +31,17 @@ A CLI tool that displays your [Claude](https://claude.ai) usage quota — sessio
                     ↻ resets 4/30 (Thu) 14:00
 ```
 
-With `--org`:
+With `--org` — adds organization spending and per-user breakdown for each session:
 
 ```
+  Your Usage (Alice)
+  ──────────────────────────────────────────────
+  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
+  Weekly Limit      ██████████████████░░░░░░░ 72%
+                    ↻ resets 4/29 (Wed) 17:00
+  Claude Design     █████████████░░░░░░░░░░░░ 54%
+                    ↻ resets 4/29 (Wed) 17:00
+
   Organization (MyTeam)
   ──────────────────────────────────────────────
   Monthly Spend     ███████████████░░░░░░░░░░ 60%  ($120.09 / $200.00)
@@ -41,6 +51,12 @@ With `--org`:
   ──────────────────────────────────────────────
   Alice                     $95.47
   Bob                       $24.67
+
+  Your Usage (Bob)
+  ──────────────────────────────────────────────
+  Session           ░░░░░░░░░░░░░░░░░░░░░░░░░ 0%
+  Weekly Limit      ████████░░░░░░░░░░░░░░░░░ 32%
+                    ↻ resets 4/30 (Thu) 14:00
 ```
 
 ## Requirements
@@ -81,14 +97,14 @@ ccquota login      # second account — opens a fresh browser
 ```bash
 ccquota                  # all accounts (default)
 ccquota --user Alice     # specific account only
-ccquota --org            # include organization spending & per-user breakdown
+ccquota --org            # all sessions + organization spending & per-user breakdown
 ccquota --watch          # refresh every 60s
 ccquota -w -n 30         # refresh every 30s
 ccquota -o -w            # organization + watch mode
 ccquota --debug          # print raw JSON from APIs
 ```
 
-> When installed via `uv pip install -e .`, you can run `ccquota` directly. Otherwise prefix with `uv run`.
+> Install system-wide with `uv tool install -e .`, then `ccquota` is available everywhere. Otherwise prefix with `uv run`.
 
 ### Logout
 
@@ -103,7 +119,7 @@ ccquota logout --all     # remove all sessions
 | Flag | Short | Description |
 |---|---|---|
 | `--user NAME` | `-u NAME` | Show only the specified session |
-| `--org` | `-o` | Include organization spending and per-user breakdown |
+| `--org` | `-o` | Show all sessions with organization spending and per-user breakdown |
 | `--watch` | `-w` | Refresh periodically (default: every 60s) |
 | `--interval SEC` | `-n SEC` | Watch interval in seconds (default: 60) |
 | `--debug` | | Print raw JSON data from APIs |
