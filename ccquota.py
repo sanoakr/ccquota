@@ -25,6 +25,59 @@ WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
 # ---------------------------------------------------------------------------
+# ANSI styling
+# ---------------------------------------------------------------------------
+
+def _use_color() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if not hasattr(sys.stdout, "isatty"):
+        return False
+    return sys.stdout.isatty()
+
+
+_COLOR = _use_color()
+
+
+def _s(code: str, text: str) -> str:
+    if not _COLOR:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def _bold(t: str) -> str:
+    return _s("1", t)
+
+
+def _dim(t: str) -> str:
+    return _s("2", t)
+
+
+def _green(t: str) -> str:
+    return _s("32", t)
+
+
+def _yellow(t: str) -> str:
+    return _s("33", t)
+
+
+def _red(t: str) -> str:
+    return _s("31", t)
+
+
+def _cyan(t: str) -> str:
+    return _s("36", t)
+
+
+def _bar_color(ratio: float) -> callable:
+    if ratio < 0.5:
+        return _green
+    if ratio < 0.8:
+        return _yellow
+    return _red
+
+
+# ---------------------------------------------------------------------------
 # Cookie / API helpers
 # ---------------------------------------------------------------------------
 
@@ -113,9 +166,13 @@ def _fetch_all(cookies: dict, org_id: str) -> dict:
 # Display helpers
 # ---------------------------------------------------------------------------
 
-def _bar(ratio: float, width: int = 30) -> str:
-    filled = int(max(0, min(1, ratio)) * width)
-    return f"{'█' * filled}{'░' * (width - filled)} {ratio * 100:.0f}%"
+def _bar(ratio: float, width: int = 25) -> str:
+    ratio = max(0.0, min(1.0, ratio))
+    filled = int(ratio * width)
+    empty = width - filled
+    color = _bar_color(ratio)
+    pct_str = f"{ratio * 100:.0f}%"
+    return color("█" * filled) + _dim("░" * empty) + " " + color(pct_str)
 
 
 def _dw(s: str) -> int:
@@ -143,6 +200,19 @@ def _cents_to_dollars(cents: int | float) -> str:
     return f"${cents / 100:.2f}"
 
 
+def _section(title: str):
+    print()
+    print(f"  {_bold(title)}")
+    print(f"  {_dim('─' * 46)}")
+
+
+def _usage_row(label: str, ratio: float, reset_at: str | None = None):
+    print(f"  {label}{_pad(label)}{_bar(ratio)}")
+    r = _fmt_reset(reset_at)
+    if r:
+        print(f"  {'':18s}{_dim('↻ resets ' + r)}")
+
+
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
@@ -157,78 +227,60 @@ def _display(data: dict, org_name: str, *, debug: bool = False, timestamp: str =
     members = data.get("members", {})
     credits_data = data.get("credits", {})
 
-    print()
-    print("  Your Usage")
-    print("  " + "─" * 46)
+    _section("Your Usage")
 
     five = usage.get("five_hour", {})
     if five:
-        u = five.get("utilization", 0) or 0
-        label = "Session"
-        print(f"  {label}{_pad(label)}{_bar(u / 100)}")
-        r = _fmt_reset(five.get("resets_at"))
-        if r:
-            print(f"  {'':18s}↻ resets {r}")
+        u = (five.get("utilization", 0) or 0) / 100
+        _usage_row("Session", u, five.get("resets_at"))
 
     seven = usage.get("seven_day", {})
     if seven:
-        u = seven.get("utilization", 0) or 0
-        label = "Weekly Limit"
-        print(f"  {label}{_pad(label)}{_bar(u / 100)}")
-        r = _fmt_reset(seven.get("resets_at"))
-        if r:
-            print(f"  {'':18s}↻ resets {r}")
+        u = (seven.get("utilization", 0) or 0) / 100
+        _usage_row("Weekly Limit", u, seven.get("resets_at"))
 
     omelette = usage.get("seven_day_omelette", {})
     if omelette:
-        u = omelette.get("utilization", 0) or 0
-        label = "Claude Design"
-        print(f"  {label}{_pad(label)}{_bar(u / 100)}")
-        r = _fmt_reset(omelette.get("resets_at"))
-        if r:
-            print(f"  {'':18s}↻ resets {r}")
+        u = (omelette.get("utilization", 0) or 0) / 100
+        _usage_row("Claude Design", u, omelette.get("resets_at"))
 
     opus = usage.get("seven_day_opus", {})
     if opus:
-        u = opus.get("utilization", 0) or 0
-        label = "Opus"
-        print(f"  {label}{_pad(label)}{_bar(u / 100)}")
-        r = _fmt_reset(opus.get("resets_at"))
-        if r:
-            print(f"  {'':18s}↻ resets {r}")
+        u = (opus.get("utilization", 0) or 0) / 100
+        _usage_row("Opus", u, opus.get("resets_at"))
 
     if spend:
         used = spend.get("used_credits", 0)
         limit = spend.get("monthly_credit_limit", 0)
         if limit:
             ratio = used / limit
-            print()
-            header = f"  Organization ({org_name})" if org_name else "  Organization"
-            print(header)
-            print("  " + "─" * 46)
+            title = f"Organization ({org_name})" if org_name else "Organization"
+            _section(title)
 
             label = "Monthly Spend"
-            suffix = f"  ({_cents_to_dollars(used)} / {_cents_to_dollars(limit)})"
+            spent_str = _cents_to_dollars(used)
+            limit_str = _cents_to_dollars(limit)
+            suffix = _dim(f"  ({spent_str} / {limit_str})")
             print(f"  {label}{_pad(label)}{_bar(ratio)}{suffix}")
 
             balance = credits_data.get("amount")
             if balance is not None:
                 label2 = "Balance"
-                print(f"  {label2}{_pad(label2)}{_cents_to_dollars(balance)}")
+                print(f"  {label2}{_pad(label2)}{_cyan(_cents_to_dollars(balance))}")
 
     items = members.get("items", [])
     if items:
-        print()
-        print("  Spend by User")
-        print("  " + "─" * 46)
+        _section("Spend by User")
         for m in sorted(items, key=lambda x: -(x.get("used_credits", 0) or 0)):
             name = m.get("account_name", "Unknown")
             used = m.get("used_credits", 0) or 0
-            print(f"  {name}{_pad(name, 24)}{_cents_to_dollars(used):>8s}")
+            dollars = _cents_to_dollars(used)
+            color = _dim if used == 0 else (lambda t: t)
+            print(f"  {color(name)}{_pad(name, 24)}{color(f'{dollars:>8s}')}")
 
     if timestamp:
         print()
-        print(f"  Last updated: {timestamp}")
+        print(f"  {_dim('Updated: ' + timestamp)}")
 
     print()
 
@@ -300,7 +352,7 @@ def cmd_show(*, debug: bool = False, watch: bool = False, interval: int = 60):
             os.system("clear" if os.name != "nt" else "cls")
             now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
             _fetch_and_display(cookies, org_id, org_name, debug=debug, timestamp=now)
-            print(f"  Refreshing every {interval}s — press Ctrl+C to quit")
+            print(f"  {_dim(f'Refreshing every {interval}s — Ctrl+C to quit')}")
             time.sleep(interval)
     except KeyboardInterrupt:
         print()
