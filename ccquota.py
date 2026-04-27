@@ -8,7 +8,9 @@ Subsequent data fetches are fully headless (cookie extraction + curl_cffi).
 
 import argparse
 import json
+import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -145,7 +147,7 @@ def _cents_to_dollars(cents: int | float) -> str:
 # Display
 # ---------------------------------------------------------------------------
 
-def _display(data: dict, org_name: str, *, debug: bool = False):
+def _display(data: dict, org_name: str, *, debug: bool = False, timestamp: str = ""):
     if debug:
         print(json.dumps(data, indent=2, ensure_ascii=False))
         return
@@ -224,6 +226,10 @@ def _display(data: dict, org_name: str, *, debug: bool = False):
             used = m.get("used_credits", 0) or 0
             print(f"  {name}{_pad(name, 24)}{_cents_to_dollars(used):>8s}")
 
+    if timestamp:
+        print()
+        print(f"  Last updated: {timestamp}")
+
     print()
 
 
@@ -269,17 +275,35 @@ def cmd_login():
     print("Run `ccquota` to view your usage.")
 
 
-def cmd_show(*, debug: bool = False):
+def _fetch_and_display(cookies: dict, org_id: str, org_name: str, *, debug: bool = False, timestamp: str = ""):
+    """Fetch data and display. Returns True on success."""
+    data = _fetch_all(cookies, org_id)
+    if not data:
+        return False
+    _display(data, org_name, debug=debug, timestamp=timestamp)
+    return True
+
+
+def cmd_show(*, debug: bool = False, watch: bool = False, interval: int = 60):
     """Fetch and display usage data."""
     cookies = _extract_cookies()
     org_id, org_name = _get_org_info(cookies)
-    data = _fetch_all(cookies, org_id)
 
-    if not data:
-        print("Failed to fetch usage data.", file=sys.stderr)
-        sys.exit(1)
+    if not watch:
+        if not _fetch_and_display(cookies, org_id, org_name, debug=debug):
+            print("Failed to fetch usage data.", file=sys.stderr)
+            sys.exit(1)
+        return
 
-    _display(data, org_name, debug=debug)
+    try:
+        while True:
+            os.system("clear" if os.name != "nt" else "cls")
+            now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            _fetch_and_display(cookies, org_id, org_name, debug=debug, timestamp=now)
+            print(f"  Refreshing every {interval}s — press Ctrl+C to quit")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
 
 
 def main():
@@ -291,13 +315,17 @@ def main():
     sub.add_parser("login", help="Log in via browser")
     show_p = sub.add_parser("show", help="Show usage (default)")
     show_p.add_argument("--debug", action="store_true", help="Print raw JSON data")
+    show_p.add_argument("--watch", "-w", action="store_true", help="Refresh every 60s")
+    show_p.add_argument("--interval", "-n", type=int, default=60, metavar="SEC", help="Watch interval in seconds (default: 60)")
     parser.add_argument("--debug", action="store_true", help="Print raw JSON data")
+    parser.add_argument("--watch", "-w", action="store_true", help="Refresh every 60s")
+    parser.add_argument("--interval", "-n", type=int, default=60, metavar="SEC", help="Watch interval in seconds (default: 60)")
 
     args = parser.parse_args()
     if args.command == "login":
         cmd_login()
     else:
-        cmd_show(debug=args.debug)
+        cmd_show(debug=args.debug, watch=args.watch, interval=args.interval)
 
 
 if __name__ == "__main__":
