@@ -68,6 +68,18 @@
 ## インストール
 
 ```bash
+pip install ccquota
+```
+
+uv を使う場合:
+
+```bash
+uv tool install ccquota
+```
+
+### ソースからインストール
+
+```bash
 git clone https://github.com/sanoakr/ccquota.git
 cd ccquota
 uv sync
@@ -104,7 +116,7 @@ ccquota -o -w            # 組織込み + watch モード
 ccquota --debug          # API の生 JSON を表示
 ```
 
-> `uv tool install -e .` でシステムワイドにインストールすると `ccquota` をどこからでも実行できます。未インストール時は `uv run` を付けてください。
+> ソースからインストールした場合は `uv tool install -e .` でシステムワイドに使えます。未インストール時は `uv run` を付けてください。
 
 ### ログアウト
 

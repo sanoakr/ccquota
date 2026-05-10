@@ -68,6 +68,18 @@ With `--org` — adds organization spending and per-user breakdown for each sess
 ## Installation
 
 ```bash
+pip install ccquota
+```
+
+or with uv:
+
+```bash
+uv tool install ccquota
+```
+
+### Install from source
+
+```bash
 git clone https://github.com/sanoakr/ccquota.git
 cd ccquota
 uv sync
@@ -104,7 +116,7 @@ ccquota -o -w            # organization + watch mode
 ccquota --debug          # print raw JSON from APIs
 ```
 
-> Install system-wide with `uv tool install -e .`, then `ccquota` is available everywhere. Otherwise prefix with `uv run`.
+> If installed from source, use `uv tool install -e .` for system-wide access. Otherwise prefix commands with `uv run`.
 
 ### Logout
 
