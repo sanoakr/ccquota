@@ -3,7 +3,7 @@
 
 Fetches usage data from claude.ai internal APIs and displays it in the terminal.
 Requires a one-time browser login via `ccquota login`.
-Subsequent data fetches are fully headless (cookie extraction + curl_cffi).
+Subsequent data fetches are fully headless via Playwright's built-in HTTP client.
 """
 
 import argparse
@@ -16,8 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from curl_cffi import requests as curl_requests
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, BrowserContext
 
 CONFIG_DIR = Path.home() / ".config" / "ccquota"
 SESSIONS_DIR = CONFIG_DIR / "sessions"
@@ -110,13 +109,17 @@ def _migrate_legacy():
         return
     name = "default"
     try:
-        cookies = _extract_cookies(_LEGACY_BROWSER_DIR)
-        data = _api("/api/bootstrap", cookies)
-        if data:
-            account = data.get("account", {})
-            raw = account.get("display_name") or account.get("full_name", "")
-            if raw:
-                name = _sanitize_name(raw)
+        pw, ctx = _open_context(_LEGACY_BROWSER_DIR)
+        try:
+            data = _api("/api/bootstrap", ctx)
+            if data:
+                account = data.get("account", {})
+                raw = account.get("display_name") or account.get("full_name", "")
+                if raw:
+                    name = _sanitize_name(raw)
+        finally:
+            ctx.close()
+            pw.stop()
     except (Exception, SystemExit):
         pass
     target = _session_dir(name)
@@ -146,42 +149,35 @@ def _resolve_session(user: str) -> Path:
 # Cookie / API helpers
 # ---------------------------------------------------------------------------
 
-def _extract_cookies(browser_dir: Path) -> dict[str, str]:
-    """Extract cookies from the Playwright persistent context (no page navigation)."""
+def _open_context(browser_dir: Path, *, headless: bool = True) -> tuple:
+    """Open a Playwright persistent context. Returns (playwright, ctx)."""
     if not browser_dir.exists():
         print("No session found. Run `ccquota login` first.", file=sys.stderr)
         sys.exit(1)
 
-    with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(browser_dir), channel="chrome", headless=True,
-        )
-        raw = ctx.cookies(["https://claude.ai"])
-        ctx.close()
-
-    return {c["name"]: c["value"] for c in raw}
+    p = sync_playwright().start()
+    ctx = p.chromium.launch_persistent_context(
+        str(browser_dir), channel="chrome", headless=headless,
+    )
+    return p, ctx
 
 
 class AuthError(Exception):
     pass
 
 
-def _api(path: str, cookies: dict) -> dict | list | None:
-    """Call a claude.ai API endpoint via curl_cffi."""
+def _api(path: str, ctx: BrowserContext) -> dict | list | None:
+    """Call a claude.ai API endpoint via Playwright's built-in HTTP client."""
     url = BASE_URL + path
     try:
-        resp = curl_requests.get(
-            url, cookies=cookies, impersonate="chrome",
-            headers={"Accept": "application/json"},
-            timeout=15,
-        )
+        resp = ctx.request.get(url, headers={"Accept": "application/json"}, timeout=15000)
     except Exception as e:
         print(f"API error: {e}", file=sys.stderr)
         return None
 
-    if resp.status_code in (401, 403):
+    if resp.status in (401, 403):
         raise AuthError("Run `ccquota login` to re-authenticate.")
-    if resp.status_code != 200:
+    if resp.status != 200:
         return None
 
     return resp.json()
@@ -191,9 +187,9 @@ def _api(path: str, cookies: dict) -> dict | list | None:
 # Data fetching
 # ---------------------------------------------------------------------------
 
-def _get_account_info(cookies: dict) -> tuple[str, str, str]:
+def _get_account_info(ctx: BrowserContext) -> tuple[str, str, str]:
     """Return (org_id, org_name, user_name) from the bootstrap API."""
-    data = _api("/api/bootstrap", cookies)
+    data = _api("/api/bootstrap", ctx)
     if not data:
         print("Failed to fetch bootstrap info.", file=sys.stderr)
         sys.exit(1)
@@ -210,25 +206,25 @@ def _get_account_info(cookies: dict) -> tuple[str, str, str]:
     return org["uuid"], org.get("name", ""), user_name
 
 
-def _fetch_all(cookies: dict, org_id: str, *, org: bool = False) -> dict:
+def _fetch_all(ctx: BrowserContext, org_id: str, *, org: bool = False) -> dict:
     """Fetch usage data. Organization spending is included only when org=True."""
     result = {}
 
-    usage = _api(f"/api/organizations/{org_id}/usage", cookies)
+    usage = _api(f"/api/organizations/{org_id}/usage", ctx)
     if usage:
         result["usage"] = usage
 
     if org:
         try:
-            spend = _api(f"/api/organizations/{org_id}/overage_spend_limit", cookies)
+            spend = _api(f"/api/organizations/{org_id}/overage_spend_limit", ctx)
             if spend:
                 result["spend"] = spend
 
-            members = _api(f"/api/organizations/{org_id}/overage_spend_limits?page=1&per_page=100", cookies)
+            members = _api(f"/api/organizations/{org_id}/overage_spend_limits?page=1&per_page=100", ctx)
             if members:
                 result["members"] = members
 
-            credits = _api(f"/api/organizations/{org_id}/prepaid/credits", cookies)
+            credits = _api(f"/api/organizations/{org_id}/prepaid/credits", ctx)
             if credits:
                 result["credits"] = credits
         except AuthError:
@@ -380,41 +376,46 @@ def cmd_login():
         shutil.rmtree(temp_dir)
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(temp_dir), channel="chrome", headless=False,
-            viewport={"width": 1280, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto("https://claude.ai", timeout=60_000)
+    pw = sync_playwright().start()
+    login_ctx = pw.chromium.launch_persistent_context(
+        str(temp_dir), channel="chrome", headless=False,
+        viewport={"width": 1280, "height": 900},
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+    page = login_ctx.pages[0] if login_ctx.pages else login_ctx.new_page()
+    page.goto("https://claude.ai", timeout=60_000)
 
-        print("Please log in to claude.ai in the browser window.")
-        print("Waiting for login (up to 5 minutes)...")
+    print("Please log in to claude.ai in the browser window.")
+    print("Waiting for login (up to 5 minutes)...")
 
-        for _ in range(150):
-            page.wait_for_timeout(2000)
-            if "claude.ai" in page.url and "login" not in page.url:
-                break
-        else:
-            print("Timed out.", file=sys.stderr)
-            ctx.close()
-            shutil.rmtree(temp_dir)
-            sys.exit(1)
+    bootstrap_data = None
+    auth_skip = ("login", "auth.anthropic", "oauth")
+    for _ in range(150):
+        page.wait_for_timeout(2000)
+        url = page.url
+        if "claude.ai" in url and not any(s in url for s in auth_skip):
+            try:
+                result = page.evaluate(
+                    "async () => { try { const r = await fetch('/api/bootstrap', "
+                    "{headers: {'Accept': 'application/json'}}); "
+                    "if (r.status === 200) return await r.json(); return null; } "
+                    "catch(e) { return null; } }"
+                )
+                if result:
+                    bootstrap_data = result
+                    break
+            except Exception:
+                pass
 
-        ctx.close()
+    login_ctx.close()
+    pw.stop()
 
-    cookies = _extract_cookies(temp_dir)
-    try:
-        data = _api("/api/bootstrap", cookies)
-    except AuthError:
-        data = None
-    if not data:
-        print("Login failed. Please try again.", file=sys.stderr)
+    if not bootstrap_data:
+        print("Login failed or timed out. Please try again.", file=sys.stderr)
         shutil.rmtree(temp_dir)
         sys.exit(1)
 
-    account = data.get("account", {})
+    account = bootstrap_data.get("account", {})
     raw_name = account.get("display_name") or account.get("full_name", "")
     name = _sanitize_name(raw_name) if raw_name else "default"
 
@@ -477,9 +478,9 @@ def cmd_logout(user: str | None = None, *, remove_all: bool = False):
     sys.exit(1)
 
 
-def _fetch_and_display(cookies: dict, org_id: str, org_name: str, user_name: str = "", *, org: bool = False, debug: bool = False, timestamp: str = ""):
+def _fetch_and_display(ctx: BrowserContext, org_id: str, org_name: str, user_name: str = "", *, org: bool = False, debug: bool = False, timestamp: str = ""):
     """Fetch data and display. Returns True on success."""
-    data = _fetch_all(cookies, org_id, org=org)
+    data = _fetch_all(ctx, org_id, org=org)
     if not data:
         return False
     _display(data, org_name, user_name, debug=debug, timestamp=timestamp)
@@ -488,40 +489,47 @@ def _fetch_and_display(cookies: dict, org_id: str, org_name: str, user_name: str
 
 def _show_single(browser_dir: Path, *, org: bool, debug: bool, watch: bool, interval: int):
     """単一セッションのデータを表示する。"""
+    pw, ctx = _open_context(browser_dir)
     try:
-        cookies = _extract_cookies(browser_dir)
-        org_id, org_name, user_name = _get_account_info(cookies)
-    except AuthError as e:
-        print(f"Auth error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    if not watch:
-        if not _fetch_and_display(cookies, org_id, org_name, user_name, org=org, debug=debug):
-            print("Failed to fetch usage data.", file=sys.stderr)
+        try:
+            org_id, org_name, user_name = _get_account_info(ctx)
+        except AuthError as e:
+            print(f"Auth error: {e}", file=sys.stderr)
             sys.exit(1)
-        return
 
-    try:
-        while True:
-            os.system("clear" if os.name != "nt" else "cls")
-            now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            _fetch_and_display(cookies, org_id, org_name, user_name, org=org, debug=debug, timestamp=now)
-            print(f"  {_dim(f'Refreshing every {interval}s — Ctrl+C to quit')}")
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        print()
+        if not watch:
+            if not _fetch_and_display(ctx, org_id, org_name, user_name, org=org, debug=debug):
+                print("Failed to fetch usage data.", file=sys.stderr)
+                sys.exit(1)
+            return
+
+        try:
+            while True:
+                os.system("clear" if os.name != "nt" else "cls")
+                now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                _fetch_and_display(ctx, org_id, org_name, user_name, org=org, debug=debug, timestamp=now)
+                print(f"  {_dim(f'Refreshing every {interval}s — Ctrl+C to quit')}")
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print()
+    finally:
+        ctx.close()
+        pw.stop()
 
 
 def _show_all(sessions: list[str], *, org: bool, debug: bool, watch: bool, interval: int):
     """全セッションのデータを表示する。"""
     def _show_one(name: str, *, timestamp: str = ""):
+        pw, ctx = _open_context(_session_dir(name))
         try:
-            cookies = _extract_cookies(_session_dir(name))
-            oid, oname, uname = _get_account_info(cookies)
-            if not _fetch_and_display(cookies, oid, oname, uname, org=org, debug=debug, timestamp=timestamp):
+            oid, oname, uname = _get_account_info(ctx)
+            if not _fetch_and_display(ctx, oid, oname, uname, org=org, debug=debug, timestamp=timestamp):
                 print(f"  Failed to fetch data for '{name}'.", file=sys.stderr)
         except AuthError as e:
             print(f"  {name}: {e}", file=sys.stderr)
+        finally:
+            ctx.close()
+            pw.stop()
 
     if not watch:
         for s in sessions:

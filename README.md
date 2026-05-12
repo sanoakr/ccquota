@@ -6,10 +6,10 @@ A CLI tool that displays your [Claude](https://claude.ai) usage quota — sessio
 
 ## How It Works
 
-`ccquota` calls Claude's internal APIs directly. No browser is launched during normal use.
+`ccquota` calls Claude's internal APIs directly. No browser window appears during normal use.
 
 1. **Login (one-time per account):** Opens Chrome for you to sign in to claude.ai. The session is saved locally under `~/.config/ccquota/sessions/<name>/`.
-2. **Show (default):** Extracts cookies from saved sessions (headless, no window), then fetches usage data via [curl_cffi](https://github.com/lexiforest/curl_cffi) which impersonates a real browser's TLS fingerprint to pass Cloudflare.
+2. **Show (default):** Launches Chrome headlessly using the saved session, then fetches usage data via Playwright's built-in HTTP client — which shares the browser's cookies and TLS context, so Cloudflare is not an obstacle.
 
 ## Example Output
 

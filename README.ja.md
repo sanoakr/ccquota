@@ -9,7 +9,7 @@
 `ccquota` は Claude の内部 API を直接呼び出します。通常の使用時にブラウザウィンドウは表示されません。
 
 1. **ログイン（アカウントごとに初回のみ）:** Chrome を開いて claude.ai にサインイン。セッションは `~/.config/ccquota/sessions/<name>/` にローカル保存されます。
-2. **表示（デフォルト）:** 保存済みセッションから Cookie を抽出（ヘッドレス、ウィンドウなし）し、[curl_cffi](https://github.com/lexiforest/curl_cffi) でブラウザの TLS フィンガープリントを模倣して Cloudflare を通過します。
+2. **表示（デフォルト）:** 保存済みセッションを使って Chrome をヘッドレス起動し、Playwright の組み込み HTTP クライアント経由で使用量データを取得します。ブラウザの Cookie と TLS コンテキストをそのまま利用するため、Cloudflare を回避できます。
 
 ## 出力例
 
